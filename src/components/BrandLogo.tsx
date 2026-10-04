@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useI18n } from "@/lib/i18n/provider";
 
 const SIZES = {
@@ -18,10 +19,13 @@ export default function BrandLogo({ size = "sm", showText = false, className = "
   return (
     <span className={`inline-flex items-center gap-2 ${className}`} dir={dir}>
       {/* The logo has a light background, so it sits on a matching tile that also works in dark mode. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
+      <Image
         src="/jameyati_logo.png"
         alt="Jameyati | جمعيتي"
+        width={1408}
+        height={768}
+        priority
+        sizes="(max-width: 640px) 96px, 144px"
         className={`${SIZES[size]} w-auto rounded-lg bg-[#f8f9f3] object-contain ring-1 ring-black/5 dark:ring-white/10`}
       />
       {showText && (

@@ -6,13 +6,15 @@ import type { Jameya, Membership, Payment, SharePayout } from "@/lib/types";
 export default async function DashboardPage() {
   const { supabase, user, profile } = await requireUser();
 
-  const { data: memberships } = await supabase.from("memberships").select("*").eq("user_id", user.id);
+  const { data: memberships } = await supabase.from("memberships")
+    .select("id,jameya_id,user_id,shares_count").eq("user_id", user.id);
   const mine = (memberships ?? []) as Membership[];
 
   const [jameyat, schedule, payments] = await Promise.all([
-    supabase.from("jameyat").select("*").in("id", mine.map((m) => m.jameya_id)),
-    supabase.from("shares_payout_schedule").select("*").in("membership_id", mine.map((m) => m.id)),
-    supabase.from("payments").select("*").eq("user_id", user.id),
+    supabase.from("jameyat").select("id,name,total_amount,monthly_installment,duration_months,start_date").in("id", mine.map((m) => m.jameya_id)),
+    supabase.from("shares_payout_schedule")
+      .select("id,membership_id,share_number,payout_month,is_paid_out").in("membership_id", mine.map((m) => m.id)),
+    supabase.from("payments").select("id,jameya_id,user_id,month_number,status").eq("user_id", user.id),
   ]);
 
   const entries = mine.flatMap((membership) => {

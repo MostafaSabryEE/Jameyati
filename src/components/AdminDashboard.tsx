@@ -1,23 +1,24 @@
 "use client";
 
 import { Check, ChevronLeft, Loader2, Trash2, X } from "lucide-react";
+import dynamic from "next/dynamic";
+import { useCallback, useEffect, useMemo, useOptimistic, useState, useTransition } from "react";
+import { removeMember, setPaymentStatus, setPayoutDone, updateJameyaSettings, updateMemberAllocation } from "@/app/admin/actions";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
-import { removeMember } from "@/app/admin/actions";
 import AddMemberFromUsers from "@/components/AddMemberFromUsers";
 import DelegationPanel from "@/components/DelegationPanel";
-import PayoutScheduler from "@/components/PayoutScheduler";
 import { Field, Stat, useMoney } from "@/components/ui";
 import { useI18n } from "@/lib/i18n/provider";
-import { createClient } from "@/lib/supabase/client";
 import {
   currentMonthNumber, monthLabel, shareWeights,
   type Jameya, type JameyaAdmin, type Membership, type Payment, type PaymentStatus, type Profile, type SharePayout,
 } from "@/lib/types";
 
+const PayoutScheduler = dynamic(() => import("@/components/PayoutScheduler"), {
+  loading: () => <div className="h-24 animate-pulse rounded-xl bg-slate-100 dark:bg-slate-700" />,
+});
+
 interface Props {
-  adminId: string;
   isSuper: boolean;
   canDelegate: boolean;
   jameya: Jameya;
@@ -30,68 +31,88 @@ interface Props {
 }
 
 export default function AdminDashboard({
-  adminId, isSuper, canDelegate, jameya, profiles, memberships, schedule: initialSchedule, payments: initialPayments, users, admins,
+  isSuper, canDelegate, jameya, profiles, memberships, schedule: initialSchedule, payments: initialPayments, users, admins,
 }: Props) {
   const { t, locale } = useI18n();
-  const router = useRouter();
-  const supabase = createClient();
   const money = useMoney();
-  const [, startTransition] = useTransition();
-  const refresh = () => startTransition(() => router.refresh());
+  const [isPending, startTransition] = useTransition();
 
-  // Local copies for instant (optimistic) toggling.
-  const [payments, setPayments] = useState(initialPayments);
-  useEffect(() => setPayments(initialPayments), [initialPayments]);
+  const [payments, setOptimisticPayment] = useOptimistic<Payment[], Payment>(
+    initialPayments,
+    (state, update) => [
+      ...state.filter((p) => !(p.user_id === update.user_id && p.month_number === update.month_number)),
+      update,
+    ]
+  );
   const [schedule, setSchedule] = useState(initialSchedule);
   useEffect(() => setSchedule(initialSchedule), [initialSchedule]);
 
-  const months = Array.from({ length: jameya.duration_months }, (_, i) => i + 1);
-  const profileOf = (uid: string) => profiles.find((p) => p.id === uid);
-  const scheduleOf = (membershipId: string) => schedule.filter((s) => s.membership_id === membershipId);
-  const dueOf = (m: Membership) => jameya.monthly_installment * m.shares_count;
-  const isPaid = (uid: string, month: number) =>
-    payments.some((p) => p.user_id === uid && p.month_number === month && p.status === "paid");
-  const payoutMonthsOf = (m: Membership) => new Set(scheduleOf(m.id).map((s) => s.payout_month));
+  const months = useMemo(() => Array.from({ length: jameya.duration_months }, (_, i) => i + 1), [jameya.duration_months]);
+  const profileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
+  const membershipById = useMemo(() => new Map(memberships.map((m) => [m.id, m])), [memberships]);
+  const scheduleByMembership = useMemo(() => {
+    const map = new Map<string, SharePayout[]>();
+    for (const row of schedule) map.set(row.membership_id, [...(map.get(row.membership_id) ?? []), row]);
+    return map;
+  }, [schedule]);
+  const profileOf = useCallback((uid: string) => profileById.get(uid), [profileById]);
+  const scheduleOf = useCallback((membershipId: string) => scheduleByMembership.get(membershipId) ?? [], [scheduleByMembership]);
+  const dueOf = useCallback((m: Membership) => jameya.monthly_installment * m.shares_count, [jameya.monthly_installment]);
+  const paidPaymentKeys = useMemo(() => new Set(
+    payments.filter((p) => p.status === "paid").map((p) => `${p.user_id}:${p.month_number}`)
+  ), [payments]);
+  const isPaid = useCallback((uid: string, n: number) => paidPaymentKeys.has(`${uid}:${n}`), [paidPaymentKeys]);
+  const payoutMonthsOf = useCallback((m: Membership) => new Set(scheduleOf(m.id).map((s) => s.payout_month)), [scheduleOf]);
 
   const month = currentMonthNumber(jameya.start_date, jameya.duration_months);
-  const collected = memberships.filter((m) => isPaid(m.user_id, month)).reduce((s, m) => s + dueOf(m), 0);
-  const pending = memberships.filter((m) => !isPaid(m.user_id, month)).reduce((s, m) => s + dueOf(m), 0);
+  const { collected, pending } = useMemo(() => memberships.reduce((totals, m) => {
+    if (isPaid(m.user_id, month)) totals.collected += dueOf(m);
+    else totals.pending += dueOf(m);
+    return totals;
+  }, { collected: 0, pending: 0 }), [memberships, month, isPaid, dueOf]);
 
-  // Every (member, share) paid out in a given month.
-  const payoutsIn = (n: number) =>
-    schedule.filter((s) => s.payout_month === n).flatMap((s) => {
-      const m = memberships.find((x) => x.id === s.membership_id);
-      if (!m) return [];
-      const weight = shareWeights(m.shares_count)[s.share_number - 1] ?? 0;
-      return [{ id: s.id, done: s.is_paid_out, name: profileOf(m.user_id)?.full_name ?? "", share: s.share_number, amount: weight * jameya.total_amount }];
-    });
-  const thisMonthPayouts = payoutsIn(month);
+  const payoutsByMonth = useMemo(() => {
+    const map = new Map<number, Array<{ id: string; done: boolean; name: string; share: number; amount: number }>>();
+    for (const row of schedule) {
+      const membership = membershipById.get(row.membership_id);
+      if (!membership) continue;
+      const weight = shareWeights(membership.shares_count)[row.share_number - 1] ?? 0;
+      const monthRows = map.get(row.payout_month) ?? [];
+      monthRows.push({
+        id: row.id,
+        done: row.is_paid_out,
+        name: profileOf(membership.user_id)?.full_name ?? "",
+        share: row.share_number,
+        amount: weight * jameya.total_amount,
+      });
+      map.set(row.payout_month, monthRows);
+    }
+    return map;
+  }, [schedule, membershipById, profileOf, jameya.total_amount]);
+  const thisMonthPayouts = payoutsByMonth.get(month) ?? [];
 
-  async function togglePayout(scheduleId: string, done: boolean) {
-    setSchedule((prev) => prev.map((s) => (s.id === scheduleId ? { ...s, is_paid_out: done } : s)));
-    const { error } = await supabase.from("shares_payout_schedule")
-      .update({ is_paid_out: done, paid_out_at: done ? new Date().toISOString() : null, paid_out_by: done ? adminId : null })
-      .eq("id", scheduleId);
-    if (error) alert(t("error"));
-    refresh();
-  }
+  const togglePayout = useCallback(async (scheduleId: string, done: boolean) => {
+    const previous = schedule;
+    setSchedule((rows) => rows.map((s) => (s.id === scheduleId ? { ...s, is_paid_out: done } : s)));
+    const result = await setPayoutDone({ jameyaId: jameya.id, scheduleId, done });
+    if (result.error) {
+      setSchedule(previous);
+      alert(result.error);
+    }
+  }, [jameya.id, schedule]);
 
-  async function togglePayment(uid: string, n: number) {
+  const togglePayment = useCallback((uid: string, n: number) => {
     const status: PaymentStatus = isPaid(uid, n) ? "pending" : "paid";
-    setPayments((prev) => [
-      ...prev.filter((p) => !(p.user_id === uid && p.month_number === n)),
-      { id: `${uid}-${n}`, jameya_id: jameya.id, user_id: uid, month_number: n, status },
-    ]);
-    const { error } = await supabase.from("payments").upsert(
-      { jameya_id: jameya.id, user_id: uid, month_number: n, status, updated_by: adminId, updated_at: new Date().toISOString() },
-      { onConflict: "jameya_id,user_id,month_number" }
-    );
-    if (error) alert(t("error"));
-    refresh();
-  }
+    const update: Payment = { id: `${uid}-${n}`, jameya_id: jameya.id, user_id: uid, month_number: n, status };
+    startTransition(async () => {
+      setOptimisticPayment(update);
+      const result = await setPaymentStatus({ jameyaId: jameya.id, userId: uid, monthNumber: n, status });
+      if (result.error) alert(result.error);
+    });
+  }, [isPaid, jameya.id, setOptimisticPayment, startTransition]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" aria-busy={isPending}>
       <div>
         <Link href="/admin" className="inline-flex items-center gap-1 text-sm text-slate-500 hover:underline">
           <ChevronLeft size={16} className="rtl:rotate-180" /> {t("back")}
@@ -111,14 +132,14 @@ export default function AdminDashboard({
         />
       </section>
 
-      <SettingsForm jameya={jameya} onSaved={refresh} />
+      <SettingsForm jameya={jameya} />
 
       {/* Payout timeline: who receives what, per month */}
       <section className="card">
         <h2 className="mb-3 text-lg font-semibold">{t("payoutTimeline")}</h2>
         <ul className="divide-y divide-slate-200 dark:divide-slate-700">
           {months.map((n) => {
-            const rows = payoutsIn(n);
+            const rows = payoutsByMonth.get(n) ?? [];
             return (
               <li key={n} className={`flex flex-wrap items-start justify-between gap-2 py-2 ${n === month ? "font-semibold" : ""}`}>
                 <span>{t("month")} {n} · {monthLabel(jameya.start_date, n, locale)}</span>
@@ -212,14 +233,12 @@ export default function AdminDashboard({
             membership={m}
             schedule={scheduleOf(m.id)}
             jameya={jameya}
-            onChanged={refresh}
           />
         ))}
         <AddMemberFromUsers
           jameya={jameya}
           candidates={users.filter((u) => u.status === "active" && !memberships.some((m) => m.user_id === u.id))}
           isSuper={isSuper}
-          onAdded={refresh}
         />
       </section>
 
@@ -228,7 +247,7 @@ export default function AdminDashboard({
   );
 }
 
-function SettingsForm({ jameya, onSaved }: { jameya: Jameya; onSaved: () => void }) {
+function SettingsForm({ jameya }: { jameya: Jameya }) {
   const { t } = useI18n();
   const [form, setForm] = useState({
     name: jameya.name,
@@ -245,18 +264,18 @@ function SettingsForm({ jameya, onSaved }: { jameya: Jameya; onSaved: () => void
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
-    const { error } = await createClient().from("jameyat").update({
+    const result = await updateJameyaSettings({
+      jameyaId: jameya.id,
       name: form.name,
-      total_amount: Number(form.total_amount),
-      monthly_installment: Number(form.monthly_installment),
-      duration_months: Number(form.duration_months),
-      start_date: form.start_date,
-    }).eq("id", jameya.id);
+      totalAmount: Number(form.total_amount),
+      monthlyInstallment: Number(form.monthly_installment),
+      durationMonths: Number(form.duration_months),
+      startDate: form.start_date,
+    });
     setBusy(false);
-    if (error) return alert(t("error"));
+    if (result.error) return alert(result.error);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
-    onSaved();
   }
 
   return (
@@ -284,8 +303,8 @@ function SettingsForm({ jameya, onSaved }: { jameya: Jameya; onSaved: () => void
   );
 }
 
-function MemberRow({ profile, membership, schedule, jameya, onChanged }: {
-  profile?: Profile; membership: Membership; schedule: SharePayout[]; jameya: Jameya; onChanged: () => void;
+function MemberRow({ profile, membership, schedule, jameya }: {
+  profile?: Profile; membership: Membership; schedule: SharePayout[]; jameya: Jameya;
 }) {
   const { t } = useI18n();
   const money = useMoney();
@@ -301,26 +320,17 @@ function MemberRow({ profile, membership, schedule, jameya, onChanged }: {
   async function save() {
     if (!(sharesNum > 0)) return;
     setBusy(true);
-    const supabase = createClient();
-
-    const { error: mErr } = await supabase.from("memberships").update({ shares_count: sharesNum }).eq("id", membership.id);
-    if (mErr) { setBusy(false); return alert(t("error")); }
-
-    // One schedule row per assigned share; rows for unassigned/removed shares are deleted.
-    const rows = shareWeights(sharesNum)
-      .map((_, i) => ({ membership_id: membership.id, share_number: i + 1, payout_month: Number(slots[i]) }))
-      .filter((r) => r.payout_month > 0);
-    if (rows.length) {
-      const { error } = await supabase.from("shares_payout_schedule").upsert(rows, { onConflict: "membership_id,share_number" });
-      if (error) { setBusy(false); return alert(t("error")); }
-    }
-    let cleanup = supabase.from("shares_payout_schedule").delete().eq("membership_id", membership.id);
-    if (rows.length) cleanup = cleanup.not("share_number", "in", `(${rows.map((r) => r.share_number).join(",")})`);
-    const { error: dErr } = await cleanup;
-
+    const payouts = shareWeights(sharesNum).flatMap((_, i) =>
+      slots[i] ? [{ shareNumber: i + 1, payoutMonth: Number(slots[i]) }] : []
+    );
+    const result = await updateMemberAllocation({
+      jameyaId: jameya.id,
+      membershipId: membership.id,
+      sharesCount: sharesNum,
+      payouts,
+    });
     setBusy(false);
-    if (dErr) return alert(t("error"));
-    onChanged();
+    if (result.error) alert(result.error);
   }
 
   async function remove() {
@@ -329,7 +339,6 @@ function MemberRow({ profile, membership, schedule, jameya, onChanged }: {
     const res = await removeMember(membership.id);
     setBusy(false);
     if (res.error) return alert(res.error);
-    onChanged();
   }
 
   return (

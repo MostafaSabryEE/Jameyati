@@ -1,8 +1,7 @@
 "use client";
 
 import { Loader2, Plus, Trash2 } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { createUser, deleteUser, updateUser } from "@/app/admin/actions";
 import { Field } from "@/components/ui";
 import { useI18n } from "@/lib/i18n/provider";
@@ -12,9 +11,6 @@ export default function UserManager({ users, currentId, canManageRoles }: {
   users: Profile[]; currentId: string; canManageRoles: boolean;
 }) {
   const { t } = useI18n();
-  const router = useRouter();
-  const [, startTransition] = useTransition();
-  const refresh = () => startTransition(() => router.refresh());
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const roleLabel: Record<Role, string> = {
@@ -29,14 +25,13 @@ export default function UserManager({ users, currentId, canManageRoles }: {
     const res = await action();
     setBusyId(null);
     if (res.error) alert(res.error);
-    refresh();
   }
 
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">{t("userManager")}</h1>
 
-      <AddUserForm roleLabel={roleLabel} canManageRoles={canManageRoles} onAdded={refresh} />
+      <AddUserForm roleLabel={roleLabel} canManageRoles={canManageRoles} />
 
       <section className="card space-y-3">
         <h2 className="text-lg font-semibold">{t("allUsers")} ({users.length})</h2>
@@ -86,8 +81,8 @@ export default function UserManager({ users, currentId, canManageRoles }: {
   );
 }
 
-function AddUserForm({ roleLabel, canManageRoles, onAdded }: {
-  roleLabel: Record<Role, string>; canManageRoles: boolean; onAdded: () => void;
+function AddUserForm({ roleLabel, canManageRoles }: {
+  roleLabel: Record<Role, string>; canManageRoles: boolean;
 }) {
   const { t } = useI18n();
   const empty = { fullName: "", email: "", password: "", role: "member" as Role };
@@ -101,7 +96,6 @@ function AddUserForm({ roleLabel, canManageRoles, onAdded }: {
     setBusy(false);
     if (res.error) return alert(res.error);
     setForm(empty);
-    onAdded();
   }
 
   return (

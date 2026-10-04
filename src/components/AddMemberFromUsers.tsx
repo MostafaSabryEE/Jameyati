@@ -1,20 +1,23 @@
 "use client";
 
 import { Check, Loader2, Plus, Search } from "lucide-react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useState } from "react";
-import PayoutScheduler from "@/components/PayoutScheduler";
+import { useOptimistic, useState, useTransition } from "react";
+import { addMemberToJameya } from "@/app/admin/actions";
 import { Field } from "@/components/ui";
 import { useI18n } from "@/lib/i18n/provider";
-import { createClient } from "@/lib/supabase/client";
 import { shareWeights, type Jameya, type Profile } from "@/lib/types";
 
+const PayoutScheduler = dynamic(() => import("@/components/PayoutScheduler"), {
+  loading: () => <div className="h-24 animate-pulse rounded-xl bg-slate-100 dark:bg-slate-700" />,
+});
+
 /** Adds an existing user (from the User Manager) to this Jam'eya with shares and per-share payout months. */
-export default function AddMemberFromUsers({ jameya, candidates, isSuper, onAdded }: {
+export default function AddMemberFromUsers({ jameya, candidates, isSuper }: {
   jameya: Jameya;
   candidates: Profile[]; // saved users who are not yet members
   isSuper: boolean;
-  onAdded: () => void;
 }) {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
@@ -22,9 +25,14 @@ export default function AddMemberFromUsers({ jameya, candidates, isSuper, onAdde
   const [shares, setShares] = useState("1");
   const [slots, setSlots] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [, startTransition] = useTransition();
+  const [visibleCandidates, markAdded] = useOptimistic(
+    candidates,
+    (current, addedId: string) => current.filter((candidate) => candidate.id !== addedId)
+  );
 
   const q = query.trim().toLowerCase();
-  const filtered = candidates.filter(
+  const filtered = visibleCandidates.filter(
     (u) => !q || u.full_name.toLowerCase().includes(q) || (u.email ?? "").toLowerCase().includes(q)
   );
   const sharesNum = Number(shares);
@@ -32,24 +40,21 @@ export default function AddMemberFromUsers({ jameya, candidates, isSuper, onAdde
   async function add() {
     if (!userId || !(sharesNum > 0)) return;
     setBusy(true);
-    const supabase = createClient();
-
-    const { data: membership, error } = await supabase.from("memberships")
-      .insert({ jameya_id: jameya.id, user_id: userId, shares_count: sharesNum })
-      .select("id").single();
-    if (error || !membership) { setBusy(false); return alert(error?.code === "23505" ? "Already a member" : t("error")); }
-
-    const rows = shareWeights(sharesNum)
-      .map((_, i) => ({ membership_id: membership.id, share_number: i + 1, payout_month: Number(slots[i]) }))
-      .filter((r) => r.payout_month > 0);
-    if (rows.length) {
-      const { error: sErr } = await supabase.from("shares_payout_schedule").insert(rows);
-      if (sErr) alert(t("error"));
-    }
-
-    setBusy(false);
-    setUserId(null); setQuery(""); setShares("1"); setSlots([]);
-    onAdded();
+    const payouts = shareWeights(sharesNum).flatMap((_, index) =>
+      slots[index] ? [{ shareNumber: index + 1, payoutMonth: Number(slots[index]) }] : []
+    );
+    startTransition(async () => {
+      markAdded(userId);
+      const result = await addMemberToJameya({
+        jameyaId: jameya.id,
+        userId,
+        sharesCount: sharesNum,
+        payouts,
+      });
+      setBusy(false);
+      if (result.error) return alert(result.error);
+      setUserId(null); setQuery(""); setShares("1"); setSlots([]);
+    });
   }
 
   return (
@@ -60,7 +65,7 @@ export default function AddMemberFromUsers({ jameya, candidates, isSuper, onAdde
         <Link href="/admin/users" className="text-sm text-brand-600 underline dark:text-gold-400">{t("openUserManager")}</Link>
       )}
 
-      {candidates.length === 0 ? (
+      {visibleCandidates.length === 0 ? (
         <p className="text-sm">{t("noUsersAvailable")}</p>
       ) : (
         <>

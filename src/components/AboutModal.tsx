@@ -1,6 +1,7 @@
 "use client";
 
 import { Mail, Phone, X } from "lucide-react";
+import Image from "next/image";
 import { useState } from "react";
 import BrandLogo from "@/components/BrandLogo";
 import { useI18n } from "@/lib/i18n/provider";
@@ -30,8 +31,8 @@ export default function AboutModal({ onClose }: { onClose?: () => void }) {
 
       <div className="space-y-2 border-t border-slate-200 pt-4 dark:border-slate-700">
         {creatorLogoOk && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src="/System_Creator_Logo.png" alt="" onError={() => setCreatorLogoOk(false)}
+          <Image src="/System_Creator_Logo.png" alt="" width={1408} height={768}
+            onError={() => setCreatorLogoOk(false)} sizes="112px"
             className="mx-auto h-16 w-auto rounded-lg bg-white object-contain" />
         )}
         <p className="text-sm text-slate-500 dark:text-slate-400">{t("createdBy")}</p>

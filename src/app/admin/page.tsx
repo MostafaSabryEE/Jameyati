@@ -8,7 +8,9 @@ export default async function AdminPage() {
   const { supabase, user, profile, isSuper, isManager } = await requireUser();
   if (!isManager) redirect("/dashboard");
 
-  let query = supabase.from("jameyat").select("*").order("created_at", { ascending: false });
+  let query = supabase.from("jameyat")
+    .select("id,name,total_amount,monthly_installment,duration_months,start_date,created_by")
+    .order("created_at", { ascending: false });
   if (!isSuper && profile.role === "jameya_admin") {
     const { data: assigned } = await supabase.from("jameya_admins").select("jameya_id").eq("user_id", user.id);
     query = query.in("id", (assigned ?? []).map((a) => a.jameya_id));

@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import AboutModal from "@/components/AboutModal";
+import dynamic from "next/dynamic";
 import { useI18n } from "@/lib/i18n/provider";
 import { APP_VERSION } from "@/lib/version";
+
+const AboutModal = dynamic(() => import("@/components/AboutModal"), { ssr: false });
 
 export default function Footer() {
   const { t } = useI18n();

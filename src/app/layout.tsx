@@ -14,7 +14,8 @@ export const viewport: Viewport = { width: "device-width", initialScale: 1 };
 const themeScript = `try{var t=localStorage.getItem('theme');if(t==='dark'||(!t&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.classList.add('dark')}catch(e){}`;
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const lang: Lang = cookies().get("lang")?.value === "ar" ? "ar" : "en";
+  const cookieStore = await cookies();
+  const lang: Lang = cookieStore.get("lang")?.value === "ar" ? "ar" : "en";
   const nav = await getNavState();
 
   return (

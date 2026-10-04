@@ -1,10 +1,9 @@
 "use client";
 
 import { Trash2, UserPlus } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { addJameyaAdmin, removeJameyaAdmin } from "@/app/admin/actions";
 import { useI18n } from "@/lib/i18n/provider";
-import { createClient } from "@/lib/supabase/client";
 import type { JameyaAdmin, Profile } from "@/lib/types";
 
 // Grants management of one Jam'eya to an authorized delegator.
@@ -12,7 +11,6 @@ export default function DelegationPanel({ jameyaId, admins, users }: {
   jameyaId: string; admins: JameyaAdmin[]; users: Profile[];
 }) {
   const { t } = useI18n();
-  const router = useRouter();
   const [selected, setSelected] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -23,20 +21,17 @@ export default function DelegationPanel({ jameyaId, admins, users }: {
   async function add() {
     if (!selected) return;
     setBusy(true);
-    const { error } = await createClient().from("jameya_admins").insert({ jameya_id: jameyaId, user_id: selected });
+    const result = await addJameyaAdmin({ jameyaId, userId: selected });
     setBusy(false);
-    if (error) return alert(t("error"));
+    if (result.error) return alert(result.error);
     setSelected("");
-    router.refresh();
   }
 
   async function removeDelegate(userId: string) {
     setBusy(true);
-    const { error } = await createClient().from("jameya_admins").delete()
-      .eq("jameya_id", jameyaId).eq("user_id", userId);
+    const result = await removeJameyaAdmin({ jameyaId, userId });
     setBusy(false);
-    if (error) return alert(t("error"));
-    router.refresh();
+    if (result.error) return alert(result.error);
   }
 
   return (
