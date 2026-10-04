@@ -9,9 +9,9 @@ import type { TranslationKey } from "@/lib/i18n/dictionary";
 import BrandLogo from "@/components/BrandLogo";
 import { createClient } from "@/lib/supabase/client";
 
-interface Props { signedIn: boolean; isSuper: boolean; isManager: boolean }
+interface Props { signedIn: boolean; isSuper: boolean; isAdmin: boolean; isManager: boolean }
 
-export default function Navbar({ signedIn, isSuper, isManager }: Props) {
+export default function Navbar({ signedIn, isSuper, isAdmin, isManager }: Props) {
   const { t, lang, setLang } = useI18n();
   const router = useRouter();
   const pathname = usePathname();
@@ -36,7 +36,7 @@ export default function Navbar({ signedIn, isSuper, isManager }: Props) {
   const links: { href: string; label: TranslationKey; show: boolean; exact?: boolean }[] = [
     { href: "/dashboard", label: "navDashboard", show: signedIn },
     { href: "/admin", label: "navAdmin", show: isManager, exact: true },
-    { href: "/admin/users", label: "navUsers", show: isSuper },
+    { href: "/admin/users", label: "navUsers", show: isSuper || isAdmin },
     { href: "/about", label: "navAbout", show: true },
   ];
 

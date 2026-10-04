@@ -7,7 +7,7 @@ import { useI18n } from "@/lib/i18n/provider";
 import { createClient } from "@/lib/supabase/client";
 import type { JameyaAdmin, Profile } from "@/lib/types";
 
-// Super-admin only (RLS also enforces this): grants management of this one Jam'eya.
+// Grants management of one Jam'eya to an authorized delegator.
 export default function DelegationPanel({ jameyaId, admins, users }: {
   jameyaId: string; admins: JameyaAdmin[]; users: Profile[];
 }) {

@@ -19,8 +19,9 @@ create table public.profiles (
   id          uuid primary key references auth.users(id) on delete cascade,
   full_name   text not null default '',
   email       text,
-  role        text not null default 'member' check (role in ('super_admin', 'jameya_admin', 'member')),
+  role        text not null default 'member' check (role in ('super_admin', 'admin', 'jameya_admin', 'member')),
   status      text not null default 'active' check (status in ('active', 'suspended')),
+  created_by  uuid references public.profiles(id) on delete set null,
   created_at  timestamptz not null default now()
 );
 
@@ -86,12 +87,25 @@ returns boolean language sql security definer stable set search_path = public as
                  where id = auth.uid() and role = 'super_admin' and status = 'active');
 $$;
 
+create or replace function public.is_admin()
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin' and status = 'active');
+$$;
+
 -- Super admin, or a delegated admin of this specific Jam'eya.
 create or replace function public.can_manage(j uuid)
 returns boolean language sql security definer stable set search_path = public as $$
   select public.is_super_admin()
       or (public.is_active() and exists (
-            select 1 from public.jameya_admins where jameya_id = j and user_id = auth.uid()));
+        select 1 from public.jameyat y
+        left join public.jameya_admins a on a.jameya_id = y.id and a.user_id = auth.uid()
+        where y.id = j and (
+          (public.is_admin() and (y.created_by = auth.uid() or a.user_id is not null
+            or exists (select 1 from public.memberships m where m.jameya_id = y.id and m.user_id = auth.uid())))
+          or (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'jameya_admin')
+            and a.user_id is not null)
+        )
+      ));
 $$;
 
 create or replace function public.is_member_of(j uuid)
@@ -103,10 +117,17 @@ $$;
 -- True if the caller manages a Jam'eya that this user belongs to.
 create or replace function public.manages_user(uid uuid)
 returns boolean language sql security definer stable set search_path = public as $$
-  select public.is_active() and exists (
-    select 1 from public.memberships m
-    join public.jameya_admins a on a.jameya_id = m.jameya_id
-    where m.user_id = uid and a.user_id = auth.uid());
+  select public.is_super_admin()
+      or exists (select 1 from public.profiles target
+                 where target.id = uid and public.is_admin() and target.created_by = auth.uid())
+      or exists (select 1 from public.memberships m
+                 where m.user_id = uid and public.can_manage(m.jameya_id));
+$$;
+
+create or replace function public.can_delegate(j uuid)
+returns boolean language sql security definer stable set search_path = public as $$
+  select public.is_super_admin()
+      or (public.is_admin() and public.can_manage(j));
 $$;
 
 -- ---------- Triggers --------------------------------------------------
@@ -171,6 +192,10 @@ alter table public.payments                enable row level security;
 -- Writes are super-admin only (members can never change their own role/status).
 create policy "profiles_select" on public.profiles for select to authenticated
   using (id = auth.uid() or public.is_super_admin() or public.manages_user(id));
+create policy "profiles_admin_member_insert" on public.profiles for insert to authenticated
+  with check (public.is_admin() and role = 'member' and status = 'active' and created_by = auth.uid());
+create policy "profiles_super_insert" on public.profiles for insert to authenticated
+  with check (public.is_super_admin());
 create policy "profiles_super_write" on public.profiles for all to authenticated
   using (public.is_super_admin()) with check (public.is_super_admin());
 
@@ -178,17 +203,17 @@ create policy "profiles_super_write" on public.profiles for all to authenticated
 create policy "jameyat_select" on public.jameyat for select to authenticated
   using (public.can_manage(id) or public.is_member_of(id));
 create policy "jameyat_insert" on public.jameyat for insert to authenticated
-  with check (public.is_super_admin());
+  with check ((public.is_super_admin() or public.is_admin()) and created_by = auth.uid());
 create policy "jameyat_update" on public.jameyat for update to authenticated
   using (public.can_manage(id)) with check (public.can_manage(id));
 create policy "jameyat_delete" on public.jameyat for delete to authenticated
-  using (public.is_super_admin());
+  using (public.is_super_admin() or (public.is_admin() and created_by = auth.uid()));
 
 -- jameya_admins: only the super admin delegates; delegates can see their own assignment.
 create policy "jameya_admins_select" on public.jameya_admins for select to authenticated
   using (user_id = auth.uid() or public.can_manage(jameya_id));
-create policy "jameya_admins_super_write" on public.jameya_admins for all to authenticated
-  using (public.is_super_admin()) with check (public.is_super_admin());
+create policy "jameya_admins_manage" on public.jameya_admins for all to authenticated
+  using (public.can_delegate(jameya_id)) with check (public.can_delegate(jameya_id));
 
 -- memberships: members read their own; managers manage their Jam'eya.
 create policy "memberships_select" on public.memberships for select to authenticated

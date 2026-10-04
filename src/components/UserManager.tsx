@@ -8,7 +8,9 @@ import { Field } from "@/components/ui";
 import { useI18n } from "@/lib/i18n/provider";
 import type { Profile, Role } from "@/lib/types";
 
-export default function UserManager({ users, currentId }: { users: Profile[]; currentId: string }) {
+export default function UserManager({ users, currentId, canManageRoles }: {
+  users: Profile[]; currentId: string; canManageRoles: boolean;
+}) {
   const { t } = useI18n();
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -17,6 +19,7 @@ export default function UserManager({ users, currentId }: { users: Profile[]; cu
 
   const roleLabel: Record<Role, string> = {
     super_admin: t("roleSuper"),
+    admin: t("roleAdmin"),
     jameya_admin: t("roleJameyaAdmin"),
     member: t("roleMember"),
   };
@@ -33,7 +36,7 @@ export default function UserManager({ users, currentId }: { users: Profile[]; cu
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">{t("userManager")}</h1>
 
-      <AddUserForm roleLabel={roleLabel} onAdded={refresh} />
+      <AddUserForm roleLabel={roleLabel} canManageRoles={canManageRoles} onAdded={refresh} />
 
       <section className="card space-y-3">
         <h2 className="text-lg font-semibold">{t("allUsers")} ({users.length})</h2>
@@ -50,12 +53,14 @@ export default function UserManager({ users, currentId }: { users: Profile[]; cu
                 <p className="break-all text-sm text-slate-500" dir="ltr">{u.email}</p>
               </div>
 
-              <select className="input sm:col-span-2" value={u.role} disabled={isSelf || busy} aria-label={t("role")}
-                onChange={(e) => run(u.id, () => updateUser({ id: u.id, role: e.target.value as Role }))}>
-                {(Object.keys(roleLabel) as Role[]).map((r) => (
-                  <option key={r} value={r}>{roleLabel[r]}</option>
-                ))}
-              </select>
+              {canManageRoles ? (
+                <select className="input sm:col-span-2" value={u.role} disabled={isSelf || busy} aria-label={t("role")}
+                  onChange={(e) => run(u.id, () => updateUser({ id: u.id, role: e.target.value as Role }))}>
+                  {(Object.keys(roleLabel) as Role[]).map((r) => (
+                    <option key={r} value={r}>{roleLabel[r]}</option>
+                  ))}
+                </select>
+              ) : <span className="text-sm">{roleLabel[u.role]}</span>}
 
               <span className={`w-fit rounded-full px-3 py-1 text-sm font-semibold ${
                 suspended ? "bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300"
@@ -64,14 +69,14 @@ export default function UserManager({ users, currentId }: { users: Profile[]; cu
               </span>
 
               <div className="flex gap-2">
-                <button className="btn-ghost flex-1 border border-slate-300 dark:border-slate-600" disabled={isSelf || busy}
+                {canManageRoles && <button className="btn-ghost flex-1 border border-slate-300 dark:border-slate-600" disabled={isSelf || busy}
                   onClick={() => run(u.id, () => updateUser({ id: u.id, status: suspended ? "active" : "suspended" }))}>
                   {busy && <Loader2 className="animate-spin" size={16} />} {suspended ? t("activate") : t("suspend")}
-                </button>
-                <button className="btn-ghost text-red-600" disabled={isSelf || busy} aria-label={t("remove")}
+                </button>}
+                {canManageRoles && <button className="btn-ghost text-red-600" disabled={isSelf || busy} aria-label={t("remove")}
                   onClick={() => confirm(t("confirmDeleteUser")) && run(u.id, () => deleteUser(u.id))}>
                   <Trash2 size={18} />
-                </button>
+                </button>}
               </div>
             </div>
           );
@@ -81,7 +86,9 @@ export default function UserManager({ users, currentId }: { users: Profile[]; cu
   );
 }
 
-function AddUserForm({ roleLabel, onAdded }: { roleLabel: Record<Role, string>; onAdded: () => void }) {
+function AddUserForm({ roleLabel, canManageRoles, onAdded }: {
+  roleLabel: Record<Role, string>; canManageRoles: boolean; onAdded: () => void;
+}) {
   const { t } = useI18n();
   const empty = { fullName: "", email: "", password: "", role: "member" as Role };
   const [form, setForm] = useState(empty);
@@ -111,7 +118,7 @@ function AddUserForm({ roleLabel, onAdded }: { roleLabel: Record<Role, string>; 
       </Field>
       <Field label={t("role")}>
         <select className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as Role })}>
-          {(Object.keys(roleLabel) as Role[]).map((r) => (
+          {(canManageRoles ? Object.keys(roleLabel) as Role[] : ["member" as Role]).map((r) => (
             <option key={r} value={r}>{roleLabel[r]}</option>
           ))}
         </select>

@@ -1,11 +1,10 @@
 import { notFound, redirect } from "next/navigation";
 import AdminDashboard from "@/components/AdminDashboard";
 import { requireUser } from "@/lib/auth";
-import { createServiceClient } from "@/lib/supabase/server";
 import type { Jameya, JameyaAdmin, Membership, Payment, Profile, SharePayout } from "@/lib/types";
 
 export default async function JameyaAdminPage({ params }: { params: { id: string } }) {
-  const { supabase, user, isSuper } = await requireUser();
+  const { supabase, user, isSuper, profile } = await requireUser();
 
   // Same check RLS uses: super admin or delegated admin of THIS Jam'eya.
   const { data: allowed } = await supabase.rpc("can_manage", { j: params.id });
@@ -23,15 +22,17 @@ export default async function JameyaAdminPage({ params }: { params: { id: string
   const [profiles, schedule, allUsers, admins] = await Promise.all([
     supabase.from("profiles").select("*").in("id", members.map((m) => m.user_id)),
     supabase.from("shares_payout_schedule").select("*").in("membership_id", members.map((m) => m.id)),
-    // Service client: delegated admins can't read all profiles via RLS, but may pick from the saved users.
-    createServiceClient().from("profiles").select("id,full_name,email,role,status").order("full_name"),
-    isSuper ? supabase.from("jameya_admins").select("*").eq("jameya_id", params.id) : Promise.resolve({ data: [] }),
+    supabase.from("profiles").select("*").order("full_name"),
+    isSuper || (profile.role === "admin" && jameya.created_by === user.id)
+      ? supabase.from("jameya_admins").select("*").eq("jameya_id", params.id)
+      : Promise.resolve({ data: [] }),
   ]);
 
   return (
     <AdminDashboard
       adminId={user.id}
       isSuper={isSuper}
+      canDelegate={isSuper || (profile.role === "admin" && jameya.created_by === user.id)}
       jameya={jameya as Jameya}
       profiles={(profiles.data ?? []) as Profile[]}
       memberships={members}

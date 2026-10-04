@@ -15,6 +15,18 @@ async function requireSuper(): Promise<string> {
   return user.id;
 }
 
+async function requireUserCreationRole(requestedRole: Role): Promise<{ userId: string; isSuper: boolean }> {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+  const { data: profile } = await supabase.from("profiles").select("role,status").eq("id", user.id).single();
+  if (profile?.status !== "active") throw new Error("Forbidden");
+  const isSuper = profile.role === "super_admin";
+  if (!isSuper && profile.role !== "admin") throw new Error("Forbidden");
+  if (!isSuper && requestedRole !== "member") throw new Error("Admins can create member accounts only");
+  return { userId: user.id, isSuper };
+}
+
 // Verifies the caller may manage this Jam'eya (super admin or delegated admin).
 async function requireManager(jameyaId: string) {
   const supabase = createClient();
@@ -45,7 +57,7 @@ export async function createUser(input: {
   password: string;
   role: Role;
 }): Promise<Result> {
-  await requireSuper();
+  const { userId: createdBy, isSuper } = await requireUserCreationRole(input.role);
   if (input.password && input.password.length < 8) return { error: "Password too short" };
 
   const service = createServiceClient();
@@ -57,8 +69,12 @@ export async function createUser(input: {
   });
   if (error || !data.user) return { error: error?.message ?? "Failed" };
 
-  if (input.role !== "member") {
-    await service.from("profiles").update({ role: input.role }).eq("id", data.user.id);
+  const role = isSuper ? input.role : "member";
+  const { error: profileError } = await service.from("profiles")
+    .update({ role, created_by: createdBy }).eq("id", data.user.id);
+  if (profileError) {
+    await service.auth.admin.deleteUser(data.user.id);
+    return { error: profileError.message };
   }
   return {};
 }

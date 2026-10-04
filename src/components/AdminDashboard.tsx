@@ -19,6 +19,7 @@ import {
 interface Props {
   adminId: string;
   isSuper: boolean;
+  canDelegate: boolean;
   jameya: Jameya;
   profiles: Profile[]; // members of this Jam'eya
   memberships: Membership[];
@@ -29,7 +30,7 @@ interface Props {
 }
 
 export default function AdminDashboard({
-  adminId, isSuper, jameya, profiles, memberships, schedule: initialSchedule, payments: initialPayments, users, admins,
+  adminId, isSuper, canDelegate, jameya, profiles, memberships, schedule: initialSchedule, payments: initialPayments, users, admins,
 }: Props) {
   const { t, locale } = useI18n();
   const router = useRouter();
@@ -222,7 +223,7 @@ export default function AdminDashboard({
         />
       </section>
 
-      {isSuper && <DelegationPanel jameyaId={jameya.id} admins={admins} users={users} />}
+      {canDelegate && <DelegationPanel jameyaId={jameya.id} admins={admins} users={users} />}
     </div>
   );
 }
